@@ -1,32 +1,55 @@
 # SignTalk
 
-SignTalk nhận diện một số ký hiệu bằng MediaPipe và mô hình phân loại đã huấn luyện. Giao diện web chạy bằng Flask; camera được mở trong trình duyệt và khung hình được gửi tới máy chủ cục bộ để phân tích.
+SignTalk nhận diện một số ký hiệu bằng MediaPipe và mô hình phân loại SVM đã huấn luyện. Giao diện mới dùng React, TypeScript, Vite, Tailwind CSS và Lucide React. Flask tiếp tục cung cấp API nhận diện; mô hình và xử lý ảnh không đổi.
 
-## Chạy ứng dụng
+## Chạy trong môi trường phát triển
 
-1. Cài Python 3.9–3.11 và tạo môi trường ảo nếu cần.
-2. Cài các thư viện:
+Yêu cầu Python 3.9–3.11 và Node.js 20.19+ (hoặc 22.12+).
 
-   ```bash
-   pip install -r requirements.txt
+1. Dùng Python 3.9–3.11. Nếu chưa có môi trường ảo, tạo bằng Python 3.11:
+
+   ```powershell
+   py -3.11 -m venv .venv
    ```
 
-3. Khởi chạy máy chủ:
+2. Cài thư viện và khởi chạy Flask bằng cùng môi trường Python:
 
-   ```bash
-   python main.py
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   .\.venv\Scripts\python.exe main.py
    ```
 
-   Trên Windows, có thể chạy `run.bat` (yêu cầu môi trường ảo tại `.venv`).
+   Có thể dùng `run.bat` để khởi chạy Flask nếu đã thiết lập `.venv`.
 
-4. Mở `http://127.0.0.1:5000` bằng Chrome hoặc Edge, sau đó chọn **Bật camera** và cấp quyền truy cập.
+3. Trong terminal thứ hai, cài và chạy giao diện:
 
-Camera chỉ hoạt động khi được mở trong ngữ cảnh an toàn (localhost hoặc HTTPS). Khung hình được xử lý bởi ứng dụng SignTalk đang chạy trên máy của bạn.
-Để MediaPipe bắt được tay ổn định, dùng ánh sáng đủ rõ, tránh ngược sáng và đưa bàn tay lại gần camera nhưng vẫn nằm trọn trong khung hình. Ứng dụng yêu cầu camera tối đa 1280×720 nếu thiết bị hỗ trợ; trình duyệt có thể chọn độ phân giải thấp hơn theo khả năng camera.
+   ```powershell
+   cd frontend
+   npm ci
+   npm run dev
+   ```
+
+4. Mở URL Vite hiển thị trong terminal (mặc định `http://localhost:5173`). Vite chuyển tiếp `/api` đến Flask tại `http://127.0.0.1:5000`.
+
+## Build giao diện và chạy qua Flask
+
+```powershell
+cd frontend
+npm ci
+npm run build
+cd ..
+.\.venv\Scripts\python.exe main.py
+```
+
+Sau khi build, Flask phục vụ giao diện React tại `http://127.0.0.1:5000`. Nếu chưa có bản build, Flask giữ trang HTML cũ làm dự phòng.
+
+Camera chỉ hoạt động trong ngữ cảnh an toàn (localhost hoặc HTTPS). Khung hình JPEG được gửi đến máy chủ SignTalk đang chạy để phân tích. Để MediaPipe bắt tay ổn định, dùng ánh sáng đủ rõ, tránh ngược sáng và giữ bàn tay trọn trong khung hình. Ứng dụng yêu cầu camera tối đa 1280×720 nếu thiết bị hỗ trợ; trình duyệt có thể chọn độ phân giải thấp hơn theo khả năng camera.
 
 ## Nhận diện từng động tác
 
 Sau khi bật camera, thực hiện trọn một ký hiệu. SignTalk ghi nhận các khung hình có bàn tay và tổng hợp dự đoán trong cả lượt; từ chỉ hiện khi tay rời khung hình hoặc động tác dừng ổn định. Sau khi hiện kết quả, hệ thống tạm dừng. Bấm **Tiếp tục quét** để bắt đầu lượt kế tiếp. Mỗi lượt có giới hạn 10 giây.
+
+Giao diện không tuyên bố dịch toàn bộ ngôn ngữ ký hiệu; hãy kiểm tra kết quả trước khi dùng trong giao tiếp quan trọng.
 
 ## Ký hiệu được hỗ trợ
 

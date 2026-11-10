@@ -4,7 +4,7 @@ from threading import Lock
 import cv2
 import mediapipe as mp
 import numpy as np
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from config import (
     HAND_DETECTION_CONFIDENCE,
@@ -43,6 +43,9 @@ inference_lock = Lock()
 
 @app.get("/")
 def index():
+    frontend_dir = BASE_DIR / "static" / "frontend"
+    if (frontend_dir / "index.html").is_file():
+        return send_from_directory(frontend_dir, "index.html")
     return render_template("index.html")
 
 
