@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+data/users.sqlite3
+.idea/
+processed/
+scripts/__pycache__/
+utils/__pycache__/
+videos/
+*.zip
+*.bat
+.vercel
