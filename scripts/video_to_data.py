@@ -56,6 +56,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # ============================================================
 
 from utils.feature_extraction import (
+    FEATURE_COUNT,
     extract_features,
     extract_hand_result,
 )
@@ -379,6 +380,17 @@ def main():
         ),
     )
 
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append generated samples to an existing data/<pose_name>.npy file.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing data/<pose_name>.npy file.",
+    )
+
     args = parser.parse_args()
 
     # ========================================================
@@ -408,13 +420,7 @@ def main():
     )
 
     if not video_files:
-
-        print(
-            f"Khong tim thay video nao trong: "
-            f"{input_path}"
-        )
-
-        return
+        raise FileNotFoundError(f"No supported videos found in {input_path}")
 
     # ========================================================
     # OUTPUT DIRECTORY
@@ -430,6 +436,14 @@ def main():
     output_path = (
         output_dir / f"{args.pose_name}.npy"
     )
+
+    if args.append and args.overwrite:
+        parser.error("--append and --overwrite cannot be used together")
+    if output_path.exists() and not (args.append or args.overwrite):
+        parser.error(
+            f"{output_path} already exists; use --append to keep its samples "
+            "or --overwrite to replace it"
+        )
 
     # ========================================================
     # INFORMATION
@@ -522,6 +536,7 @@ def main():
                 face_mesh,
                 hands,
                 args.step,
+                require_hand=True,
             )
 
             total_frames += frames
@@ -553,16 +568,9 @@ def main():
     # ========================================================
 
     if not all_features:
-
-        print(
-            "\n[LOI] Khong tao duoc sample nao."
+        raise ValueError(
+            f"No hand samples were extracted from videos in {input_path}"
         )
-
-        print(
-            "Kiem tra video va MediaPipe."
-        )
-
-        return
 
     # ========================================================
     # CREATE NUMPY ARRAY
@@ -602,6 +610,22 @@ def main():
             "[CANH BAO] "
             "Du lieu khong co dang 2 chieu."
         )
+
+    if X.shape[1] != FEATURE_COUNT:
+        raise ValueError(
+            f"Expected {FEATURE_COUNT} features per sample, got {X.shape[1]}"
+        )
+
+    if args.append and output_path.exists():
+        existing = np.load(output_path).astype(np.float32)
+        if existing.ndim != 2 or existing.shape[1] != FEATURE_COUNT:
+            raise ValueError(
+                f"{output_path} must have shape (samples, {FEATURE_COUNT}) "
+                "to append video features"
+            )
+        if not np.isfinite(existing).all():
+            raise ValueError(f"{output_path} contains non-finite features")
+        X = np.vstack((existing, X))
 
     # ========================================================
     # SAVE

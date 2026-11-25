@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+data/users.sqlite3
+.idea/
+processed/
+scripts/__pycache__/
+utils/__pycache__/
+videos/
+*.zip
+*.bat
+!Cache_Videos_To_NPY.bat
+!Train_From_NPY.bat
+!Start_SignTalk_Tunnel.bat
+.vercel

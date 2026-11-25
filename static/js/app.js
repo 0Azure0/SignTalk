@@ -6,25 +6,36 @@ const placeholder = document.getElementById("camera-placeholder");
 const cameraFooter = document.getElementById("camera-footer");
 const livePill = document.getElementById("live-pill");
 const toast = document.getElementById("toast");
-const continueButton = document.getElementById("continue-scan");
+const speechToggle = document.getElementById("speech-toggle");
+const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const audioPlaybackSupported = typeof Audio !== "undefined";
+let speechEnabled = false;
+let activeAudio = null;
 
 let cameraStream = null;
 let analysisTimer = null;
 let isSendingFrame = false;
 let toastTimer = null;
+let missingVietnameseVoiceNotified = false;
 let scanPhase = "scanning";
 let gestureStartedAt = 0;
 let lastMotionAt = 0;
 let lastHandAt = 0;
 let previousLandmarks = null;
+let faceAnchor = null;
+let faceStableSince = 0;
 let gesturePredictions = [];
+let gestureAudioUrls = new Map();
 let gestureFrameCount = 0;
+let spokenGestureLabel = null;
 
 const MIN_GESTURE_MS = 1800;
 const END_AFTER_STILL_MS = 1400;
 const END_AFTER_HAND_LOST_MS = 900;
 const MAX_GESTURE_MS = 10000;
 const MOTION_THRESHOLD = 0.018;
+const FACE_MOTION_THRESHOLD = 0.02;
+const STILL_DETECTION_MS = 1800;
 
 function showToast(message) {
   toast.textContent = message;
@@ -33,14 +44,110 @@ function showToast(message) {
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 4500);
 }
 
+function updateSpeechToggle() {
+  speechToggle.setAttribute("aria-pressed", String(speechEnabled));
+  document.getElementById("speech-toggle-status").textContent =
+    speechEnabled ? "Đang bật" : "Đang tắt";
+}
+
+function setSpeechEnabled(enabled, persist = true) {
+  speechEnabled = enabled && (speechSupported || audioPlaybackSupported);
+  updateSpeechToggle();
+  if (persist) {
+    try {
+      localStorage.setItem(speechToggle.dataset.preferenceKey, String(speechEnabled));
+    } catch (error) {
+      showToast("Không thể lưu tùy chọn đọc trên trình duyệt này.");
+    }
+  }
+  if (!speechEnabled) stopSpeechPlayback();
+}
+
+function stopSpeechPlayback() {
+  if (speechSupported) window.speechSynthesis.cancel();
+  if (activeAudio) {
+    activeAudio.pause();
+    activeAudio.currentTime = 0;
+    activeAudio = null;
+  }
+}
+
+function speakResult(word, audioUrl) {
+  if (!speechEnabled) return;
+  stopSpeechPlayback();
+  if (audioUrl && audioPlaybackSupported) {
+    const audio = new Audio(audioUrl);
+    activeAudio = audio;
+    const handleAudioError = () => {
+      if (activeAudio !== audio) return;
+      activeAudio = null;
+      showToast("Không thể phát file âm thanh. Hãy kiểm tra kết nối và thiết bị âm thanh.");
+    };
+    audio.addEventListener("ended", () => {
+      if (activeAudio === audio) activeAudio = null;
+    }, { once: true });
+    audio.addEventListener("error", handleAudioError, { once: true });
+    const playback = audio.play();
+    if (playback) playback.catch(handleAudioError);
+    return;
+  }
+  if (!speechSupported) {
+    showToast("Không có file âm thanh cho từ này và trình duyệt không hỗ trợ đọc văn bản.");
+    return;
+  }
+
+  const speechText = word
+    .normalize("NFC")
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\uFE0E\uFE0F\u200D]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const utterance = new SpeechSynthesisUtterance(speechText);
+  utterance.lang = "vi-VN";
+  utterance.rate = 0.95;
+  const voices = window.speechSynthesis.getVoices();
+  const vietnameseVoice = voices.find(
+    (voice) => voice.lang.toLowerCase() === "vi-vn",
+  ) || voices.find(
+    (voice) => /^vi(?:-|$)/i.test(voice.lang),
+  );
+  if (!vietnameseVoice) {
+    if (!missingVietnameseVoiceNotified) {
+      showToast("Chưa tìm thấy giọng tiếng Việt. Hãy cài giọng tiếng Việt cho Windows rồi khởi động lại Cốc Cốc.");
+      missingVietnameseVoiceNotified = true;
+    }
+    return;
+  }
+  utterance.voice = vietnameseVoice;
+  utterance.onerror = (event) => {
+    if (event.error !== "canceled" && event.error !== "interrupted") {
+      showToast("Không thể phát âm kết quả. Hãy kiểm tra thiết bị âm thanh của bạn.");
+    }
+  };
+  window.speechSynthesis.speak(utterance);
+}
+
+function initializeSpeechToggle() {
+  if (!speechSupported && !audioPlaybackSupported) {
+    speechToggle.disabled = true;
+    document.getElementById("speech-toggle-status").textContent = "Trình duyệt không hỗ trợ";
+    return;
+  }
+  try {
+    setSpeechEnabled(
+      localStorage.getItem(speechToggle.dataset.preferenceKey) === "true",
+      false,
+    );
+  } catch (error) {
+    setSpeechEnabled(false, false);
+    showToast("Không thể đọc tùy chọn đọc đã lưu trên trình duyệt này.");
+  }
+}
+
 function setDetectionStatus(result) {
   const status = document.getElementById("detection-status");
   if (scanPhase === "recording") {
-    status.textContent = "Đang ghi nhận trọn động tác…";
-    return;
-  }
-  if (scanPhase === "review") {
-    status.textContent = "Động tác đã hoàn tất";
+    status.textContent = "Đang nhận diện trực tiếp…";
     return;
   }
   if (result.hands_detected && result.face_detected) {
@@ -82,47 +189,112 @@ function resetGesture() {
   lastHandAt = 0;
   previousLandmarks = null;
   gesturePredictions = [];
+  gestureAudioUrls = new Map();
   gestureFrameCount = 0;
-  continueButton.hidden = true;
+  spokenGestureLabel = null;
   document.getElementById("camera-tip").innerHTML =
-    "<span>✧</span> Đưa tay vào khung hình; SignTalk sẽ chờ bạn hoàn thành động tác.";
+    "<span>✧</span> Đưa tay vào khung hình để xem kết quả nhận diện trực tiếp.";
   document.getElementById("result-word").innerHTML =
     `Sẵn sàng<span class="result-period">.</span>`;
   document.getElementById("result-description").textContent =
-    "Kết quả sẽ hiện sau khi bạn hoàn thành một động tác.";
-  document.getElementById("analysis-status").innerHTML = "<i></i> Đang chờ động tác";
+    "Kết quả sẽ cập nhật ngay khi SignTalk nhận diện được ký hiệu.";
+  document.getElementById("analysis-status").innerHTML = "<i></i> Đang chờ ký hiệu";
   document.getElementById("face-status").textContent = "—";
   document.getElementById("hands-status").textContent = "—";
   document.getElementById("live-pill").innerHTML = "<i></i> ĐANG QUÉT";
 }
 
-function finishGesture(message) {
-  if (scanPhase !== "recording") return;
-  scanPhase = "review";
+function getWinningPrediction(predictions) {
   const counts = new Map();
-  for (const label of gesturePredictions) {
+  for (const label of predictions) {
     counts.set(label, (counts.get(label) || 0) + 1);
   }
-  const winner = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+}
+
+function getStableSpeechLabel(predictions) {
+  const recent = predictions.slice(-4);
+  if (recent.length < 3) return null;
+  const winner = getWinningPrediction(recent);
+  return winner && winner[1] >= Math.ceil(recent.length * 0.75)
+    ? winner[0]
+    : null;
+}
+
+function updatePersonStillness(result, now) {
+  if (!result.face_detected || !result.face_center) {
+    faceAnchor = null;
+    faceStableSince = 0;
+    document.getElementById("result-word").innerHTML =
+      `Đang chờ<span class="result-period">.</span>`;
+    document.getElementById("result-description").textContent =
+      "Đưa khuôn mặt vào khung hình để theo dõi trạng thái.";
+    document.getElementById("analysis-status").innerHTML = "<i></i> Đang chờ người";
+    document.getElementById("detection-status").textContent = "Chưa phát hiện người";
+    document.getElementById("live-pill").innerHTML = "<i></i> ĐANG QUÉT";
+    return;
+  }
+
+  const currentCenter = result.face_center;
+  if (!faceAnchor) {
+    faceAnchor = currentCenter;
+    faceStableSince = now;
+  } else if (Math.hypot(
+    currentCenter[0] - faceAnchor[0],
+    currentCenter[1] - faceAnchor[1],
+  ) > FACE_MOTION_THRESHOLD) {
+    faceAnchor = currentCenter;
+    faceStableSince = now;
+  }
+
+  if (now - faceStableSince >= STILL_DETECTION_MS) {
+    document.getElementById("result-word").innerHTML =
+      `Đứng yên<span class="result-period">.</span>`;
+    document.getElementById("result-description").textContent =
+      "Không phát hiện chuyển động rõ trong khung hình.";
+    document.getElementById("analysis-status").innerHTML = "<i></i> Đứng yên";
+    document.getElementById("detection-status").textContent = "Đứng yên";
+    document.getElementById("camera-tip").innerHTML =
+      "<span>✧</span> SignTalk đang theo dõi; kết quả sẽ đổi khi bạn di chuyển hoặc làm ký hiệu.";
+    document.getElementById("live-pill").innerHTML = "<i></i> ĐỨNG YÊN";
+    return;
+  }
+
+  document.getElementById("result-word").innerHTML =
+    `Đang quan sát<span class="result-period">.</span>`;
+  document.getElementById("result-description").textContent =
+    "SignTalk đang theo dõi chuyển động của bạn.";
+  document.getElementById("analysis-status").innerHTML = "<i></i> Đang theo dõi";
+  document.getElementById("detection-status").textContent = "Đang theo dõi chuyển động";
+  document.getElementById("live-pill").innerHTML = "<i></i> ĐANG QUÉT";
+}
+
+function finishGesture(message) {
+  if (scanPhase !== "recording") return;
+  scanPhase = "scanning";
+  const winner = getWinningPrediction(gesturePredictions);
   const agreement = winner ? Math.round((winner[1] / gesturePredictions.length) * 100) : 0;
 
   if (winner) {
     document.getElementById("result-word").innerHTML =
       `${escapeHtml(winner[0])}<span class="result-period">.</span>`;
     document.getElementById("result-description").textContent =
-      `Tổng hợp ${gestureFrameCount} khung hình · ${agreement}% khung hình đồng thuận`;
+      `Đã tổng hợp ${gestureFrameCount} khung hình · ${agreement}% khung hình đồng thuận`;
+    if (winner[0] !== spokenGestureLabel) {
+      speakResult(winner[0], gestureAudioUrls.get(winner[0]));
+      spokenGestureLabel = winner[0];
+    }
   } else {
     document.getElementById("result-word").innerHTML =
       `Chưa nhận diện<span class="result-period">.</span>`;
     document.getElementById("result-description").textContent =
       "Chưa đủ dữ liệu để nhận diện. Hãy đưa tay rõ hơn vào khung hình rồi thử lại.";
   }
-  document.getElementById("analysis-status").textContent = "Động tác hoàn tất";
-  document.getElementById("detection-status").textContent = "Động tác đã hoàn tất";
+  document.getElementById("analysis-status").innerHTML = "<i></i> Đang tiếp tục quét";
+  document.getElementById("detection-status").textContent = "Đang chờ ký hiệu tiếp theo";
   document.getElementById("camera-tip").innerHTML =
-    `<span>✧</span> ${message || "Kết quả đã tổng hợp từ toàn bộ động tác."}`;
-  document.getElementById("live-pill").innerHTML = "<i></i> ĐÃ HOÀN TẤT";
-  continueButton.hidden = false;
+    `<span>✧</span> ${message || "Kết quả đã tổng hợp; SignTalk đang tự động nhận diện ký hiệu tiếp theo."}`;
+  document.getElementById("live-pill").innerHTML = "<i></i> ĐANG QUÉT";
 }
 
 function consumeFrame(result) {
@@ -132,18 +304,24 @@ function consumeFrame(result) {
   document.getElementById("hands-status").textContent =
     result.hands_detected ? "Đã phát hiện" : "Chưa phát hiện";
 
-  if (scanPhase === "review") return;
   setDetectionStatus(result);
 
   if (result.hands_detected && result.label) {
+    faceAnchor = null;
+    faceStableSince = 0;
     if (scanPhase === "scanning") {
       scanPhase = "recording";
       gestureStartedAt = now;
       lastMotionAt = now;
+      previousLandmarks = null;
+      gesturePredictions = [];
+      gestureAudioUrls = new Map();
+      gestureFrameCount = 0;
+      spokenGestureLabel = null;
       document.getElementById("analysis-status").innerHTML = "<i></i> Đang ghi nhận động tác";
       document.getElementById("live-pill").innerHTML = "<i></i> ĐANG GHI NHẬN";
       document.getElementById("camera-tip").innerHTML =
-        "<span>✧</span> Hãy thực hiện trọn ký hiệu; SignTalk sẽ tự tổng hợp khi động tác dừng.";
+        "<span>✧</span> Kết quả ký hiệu đang được cập nhật theo thời gian thực.";
     }
 
     const motion = measureMotion(result.hand_landmarks, previousLandmarks);
@@ -151,9 +329,27 @@ function consumeFrame(result) {
     previousLandmarks = result.hand_landmarks;
     lastHandAt = now;
     gesturePredictions.push(result.display_label);
+    if (result.audio_url) {
+      gestureAudioUrls.set(result.display_label, result.audio_url);
+    }
     gestureFrameCount += 1;
+    const winner = getWinningPrediction(gesturePredictions);
+    if (winner) {
+      document.getElementById("result-word").innerHTML =
+        `${escapeHtml(winner[0])}<span class="result-period">.</span>`;
+      document.getElementById("result-description").textContent =
+        `Đang nhận diện trực tiếp · ${gestureFrameCount} khung hình`;
+    }
+    const stableSpeechLabel = getStableSpeechLabel(gesturePredictions);
+    if (stableSpeechLabel && stableSpeechLabel !== spokenGestureLabel) {
+      speakResult(stableSpeechLabel, gestureAudioUrls.get(stableSpeechLabel));
+      spokenGestureLabel = stableSpeechLabel;
+    }
+    document.getElementById("analysis-status").innerHTML = "<i></i> Đang nhận diện trực tiếp";
   } else if (scanPhase === "recording") {
     previousLandmarks = null;
+  } else {
+    updatePersonStillness(result, now);
   }
 
   if (scanPhase !== "recording") return;
@@ -172,7 +368,6 @@ function consumeFrame(result) {
 async function analyzeFrame() {
   if (
     !cameraStream ||
-    scanPhase === "review" ||
     isSendingFrame ||
     video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
   ) return;
@@ -248,6 +443,7 @@ async function startCamera() {
 function stopCamera() {
   if (analysisTimer) window.clearInterval(analysisTimer);
   analysisTimer = null;
+  stopSpeechPlayback();
   if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
   cameraStream = null;
   video.srcObject = null;
@@ -262,15 +458,11 @@ function stopCamera() {
   document.getElementById("analysis-status").textContent = "Chưa bắt đầu";
   document.getElementById("face-status").textContent = "—";
   document.getElementById("hands-status").textContent = "—";
-  continueButton.hidden = true;
   scanPhase = "scanning";
 }
 
 startButton.addEventListener("click", startCamera);
 stopButton.addEventListener("click", stopCamera);
-continueButton.addEventListener("click", () => {
-  if (!cameraStream) return;
-  resetGesture();
-  analyzeFrame();
-});
+speechToggle.addEventListener("click", () => setSpeechEnabled(!speechEnabled));
 window.addEventListener("pagehide", stopCamera);
+initializeSpeechToggle();

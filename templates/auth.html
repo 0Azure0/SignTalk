@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8f7">
+  <title>{{ "Đăng ký" if mode == "register" else "Đăng nhập" }} — SignTalk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <a class="brand auth-brand" href="{{ url_for('login') }}" aria-label="SignTalk">
+      <span class="brand-mark" aria-hidden="true">S</span>
+      <span>sign<span class="brand-accent">talk</span></span>
+    </a>
+    <div class="auth-heading">
+      <span class="section-kicker">SIGN LANGUAGE STUDIO</span>
+      <h1>{{ "Tạo tài khoản" if mode == "register" else "Chào mừng trở lại" }}</h1>
+      <p>{{ "Đăng ký để lưu thông tin và bắt đầu sử dụng SignTalk." if mode == "register" else "Đăng nhập để tiếp tục sử dụng SignTalk." }}</p>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="auth-messages" role="alert">
+          {% for category, message in messages %}
+            <p class="auth-message {{ category }}">{{ message }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    <form class="auth-form" method="post" action="{{ url_for('register' if mode == 'register' else 'login') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      {% if mode == "register" %}
+        <label for="display-name">Tên hiển thị</label>
+        <input id="display-name" name="display_name" type="text" autocomplete="name" minlength="2" maxlength="60" placeholder="Tên của bạn" required>
+      {% endif %}
+      <label for="username">Tên đăng nhập</label>
+      <input id="username" name="username" type="text" autocomplete="username" minlength="3" maxlength="32" placeholder="Nhập tên đăng nhập" required>
+      <label for="password">Mật khẩu</label>
+      <input id="password" name="password" type="password" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" minlength="{{ 8 if mode == 'register' else 1 }}" maxlength="128" placeholder="Nhập mật khẩu" required>
+      <button class="auth-submit" type="submit">{{ "Tạo tài khoản" if mode == "register" else "Đăng nhập" }}</button>
+    </form>
+
+    <p class="auth-switch">
+      {% if mode == "register" %}
+        Đã có tài khoản? <a href="{{ url_for('login') }}">Đăng nhập</a>
+      {% else %}
+        Chưa có tài khoản? <a href="{{ url_for('register') }}">Đăng ký tại đây</a>
+      {% endif %}
+    </p>
+  </main>
+</body>
+</html>
